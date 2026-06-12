@@ -1,0 +1,19 @@
+# Secrets / credentials
+credentials.json
+token.json
+.env
+
+# PII — never commit
+profile/
+resume/master_resume.md
+resume/tailored/
+
+# Run artifacts
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
