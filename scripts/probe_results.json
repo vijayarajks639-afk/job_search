@@ -1,0 +1,104 @@
+{
+  "Commonwealth Bank (CBA)": {
+    "platform": "workday",
+    "host": "cba.wd3.myworkdayjobs.com",
+    "tenant": "cba",
+    "site": "CommBank_Careers",
+    "india_jobs": 44
+  },
+  "ANZ": null,
+  "HSBC": {
+    "platform": "eightfold",
+    "host": "hsbc.eightfold.ai",
+    "domain": "hsbc.com",
+    "india_jobs": 223
+  },
+  "JPMorgan Chase": {
+    "platform": "oracle_orc",
+    "host": "jpmc.fa.oraclecloud.com",
+    "site_number": "CX_1001",
+    "india_jobs": 56
+  },
+  "Goldman Sachs": null,
+  "Barclays": null,
+  "UBS": null,
+  "Morgan Stanley": null,
+  "BlackRock": {
+    "platform": "workday",
+    "host": "blackrock.wd1.myworkdayjobs.com",
+    "tenant": "blackrock",
+    "site": "BlackRock_Professional",
+    "india_jobs": 399
+  },
+  "The Standard (Standard India)": null,
+  "Bank of America": null,
+  "Macquarie": null,
+  "Deutsche Bank": null,
+  "Nomura": null,
+  "Citi": null,
+  "Visa": {
+    "platform": "smartrecruiters",
+    "company_id": "visa",
+    "india_jobs": 1
+  },
+  "BNP Paribas": null,
+  "Mastercard": null,
+  "State Street": null,
+  "LSEG (London Stock Exchange Group)": {
+    "platform": "workday",
+    "host": "lseg.wd3.myworkdayjobs.com",
+    "tenant": "lseg",
+    "site": "careers",
+    "india_jobs": 225
+  },
+  "Northern Trust": null,
+  "Societe Generale": null,
+  "Experian": {
+    "platform": "smartrecruiters",
+    "company_id": "experian",
+    "india_jobs": 103
+  },
+  "Fidelity Investments": null,
+  "American Express": null,
+  "Moody's": {
+    "platform": "greenhouse",
+    "board_token": "mco",
+    "total_jobs": 6,
+    "india_jobs": 0
+  },
+  "S&P Global": null,
+  "Walmart Global Tech": null,
+  "Tesco": null,
+  "Target": null,
+  "Thomson Reuters": null,
+  "Adobe": {
+    "platform": "workday",
+    "host": "adobe.wd5.myworkdayjobs.com",
+    "tenant": "adobe",
+    "site": "external_experienced",
+    "india_jobs": 211
+  },
+  "ServiceNow": {
+    "platform": "smartrecruiters",
+    "company_id": "servicenow",
+    "india_jobs": 21
+  },
+  "Salesforce": null,
+  "NVIDIA": null,
+  "SAP Labs": null,
+  "Lowe's": null,
+  "Microsoft IDC": null,
+  "Allianz Technology": null,
+  "Zurich Insurance": null,
+  "Aviva": null,
+  "Optum / UnitedHealth": null,
+  "Schroders": null,
+  "Legal & General": {
+    "platform": "smartrecruiters",
+    "company_id": "legalandgeneral",
+    "india_jobs": 0
+  },
+  "M&G / Prudential": null,
+  "abrdn": null,
+  "Lloyds Banking Group": null
+}

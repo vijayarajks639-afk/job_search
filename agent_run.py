@@ -21,11 +21,72 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.stdout.reconfigure(encoding="utf-8")
 
 import config
+import domain_catalog
+
+
+# ── Domain detection ──────────────────────────────────────────────────────────
+
+def detect_domain(resume_text: str, model: str = "sonnet") -> dict:
+    """
+    Fast headless LLM call (no web search) that reads the resume and returns:
+      {domain, sub_domain, confidence, reasoning, top_companies}
+    Falls back to {"domain": "IT & Data Engineering", "top_companies": ALL_COMPANIES}
+    if the call fails or returns invalid JSON.
+    """
+    claude = shutil.which("claude")
+    if not claude:
+        return _domain_fallback()
+
+    template = (config.ROOT / "prompts" / "domain_detect_prompt.md").read_text(encoding="utf-8")
+    domain_list = "\n".join(f"- {k}: {v['description']}" for k, v in domain_catalog.DOMAINS.items())
+    all_companies = "\n".join(
+        f"  [{domain}]: {', '.join(cos)}"
+        for domain, data in domain_catalog.DOMAINS.items()
+        for cos in [data["companies"]]
+    )
+    prompt = (template
+              .replace("{RESUME}", resume_text)
+              .replace("{DOMAIN_LIST}", domain_list)
+              .replace("{COMPANY_CATALOG}", all_companies))
+
+    try:
+        cmd = [claude, "-p",
+               "--output-format", "json",
+               "--allowedTools", "",        # no tools — pure classification
+               "--permission-mode", "bypassPermissions",
+               "--model", model]
+        proc = subprocess.run(
+            cmd, input=prompt, capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=120,
+        )
+        envelope = json.loads(proc.stdout or "{}")
+        result_text = envelope.get("result", "")
+        start = result_text.find("{")
+        if start == -1:
+            return _domain_fallback()
+        result, _ = json.JSONDecoder().raw_decode(result_text[start:])
+        # Validate required fields
+        if "domain" not in result or "top_companies" not in result:
+            return _domain_fallback()
+        return result
+    except Exception:
+        return _domain_fallback()
+
+
+def _domain_fallback() -> dict:
+    return {
+        "domain": "IT & Data Engineering",
+        "sub_domain": "General",
+        "confidence": "low",
+        "reasoning": "Domain detection unavailable — defaulting to IT & Data Engineering.",
+        "top_companies": domain_catalog.DOMAINS["IT & Data Engineering"]["companies"][:25],
+    }
 
 
 def _latest_seed_file():
@@ -59,21 +120,41 @@ def _load_contacts() -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def build_prompt() -> str:
+def build_prompt(companies: str = "", scoped: bool = False) -> str:
     template = config.MATCH_PROMPT.read_text(encoding="utf-8")
     resume = config.MASTER_RESUME.read_text(encoding="utf-8")
     gcc = config.ROOT.joinpath("gcc_targets.md").read_text(encoding="utf-8")
     seeds = _load_seeds(_latest_seed_file())
     contacts = _load_contacts()
 
+    # `companies` = only the companies that need WEB SEARCH (no connector or
+    # aggregator data). `scoped=True` means the user picked specific companies,
+    # so an empty list here means everything is covered by live seed data.
+    company_list = [c.strip() for c in companies.split(",") if c.strip()] if companies else []
+    if company_list:
+        selected = "\n".join(f"- {c}" for c in company_list)
+        max_searches = min(max(len(company_list) * 2, 6), 10)
+    elif scoped:
+        selected = ("(none — every selected company already has live, dated seed "
+                    "data above. Do NOT run any web searches; score the seed roles only.)")
+        max_searches = 0
+    else:
+        selected = "(all — use full GCC list above)"
+        max_searches = 6
+
+    search_after = (datetime.now().date() - timedelta(days=14)).isoformat()
+
     return (template
             .replace("{RESUME}", resume)
             .replace("{GCC_LIST}", gcc)
+            .replace("{SELECTED_COMPANIES}", selected)
             .replace("{SEED_JOBS}", json.dumps(seeds, ensure_ascii=False, indent=2) or "[]")
             .replace("{CONTACTS}", json.dumps(contacts, ensure_ascii=False) or "[]")
             .replace("{TODAY}", datetime.now().date().isoformat())
             .replace("{RECENT_DAYS}", str(config.RECENT_DAYS))
-            .replace("{FIT_THRESHOLD}", str(config.FIT_THRESHOLD)))
+            .replace("{FIT_THRESHOLD}", str(config.FIT_THRESHOLD))
+            .replace("{MAX_SEARCHES}", str(max_searches))
+            .replace("{SEARCH_AFTER_DATE}", search_after))
 
 
 def _extract_json(text: str) -> dict:
@@ -109,12 +190,13 @@ def _invoke_claude(claude: str, prompt: str, model: str, timeout: int) -> dict:
     return json.loads(proc.stdout)
 
 
-def run_agent(model: str, timeout: int = 600) -> dict:
+def run_agent(model: str, timeout: int = 600, companies: str = "",
+              scoped: bool = False) -> dict:
     claude = shutil.which("claude")
     if not claude:
         raise RuntimeError("`claude` CLI not found on PATH.")
 
-    prompt = build_prompt()
+    prompt = build_prompt(companies=companies, scoped=scoped)
     envelope = _invoke_claude(claude, prompt, model, timeout)
 
     # Retry once on transient API/socket errors (long agentic runs occasionally drop).
@@ -143,10 +225,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="sonnet")
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--companies", default="",
+                    help="comma-separated companies to focus on (from dashboard)")
     args = ap.parse_args()
 
     config.ensure_dirs()
-    payload = run_agent(args.model, args.timeout)
+    payload = run_agent(args.model, args.timeout, companies=args.companies)
 
     matches = payload.get("matches", [])
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

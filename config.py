@@ -5,6 +5,7 @@ Paths are resolved relative to this file so the project is portable.
 No secrets live here — credentials.json / token.json are gitignored.
 """
 
+import os
 from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -61,6 +62,32 @@ ROLE_KEYWORDS = [
 # HTTP politeness
 REQUEST_TIMEOUT = 30
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobSearchBot/1.0"
+
+# ── Adzuna aggregator (fallback for companies without a direct connector) ────
+# Free key: https://developer.adzuna.com/ — set both env vars to enable.
+# Without a key the aggregator step is silently skipped (web search fallback).
+#
+# Windows note: User-level env vars set via System Properties / setx are not
+# visible in processes started before the variable was added (e.g. a running
+# Streamlit session). We fall back to reading the Windows Registry directly so
+# the dashboard's subprocess.Popen calls work without needing a restart.
+def _read_env_or_registry(name: str) -> str:
+    val = os.environ.get(name, "")
+    if val:
+        return val
+    try:
+        import winreg  # Windows-only stdlib module
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Environment", 0, winreg.KEY_READ)
+        val, _ = winreg.QueryValueEx(key, name)
+        winreg.CloseKey(key)
+        return val or ""
+    except Exception:
+        return ""
+
+ADZUNA_APP_ID  = _read_env_or_registry("ADZUNA_APP_ID")
+ADZUNA_APP_KEY = _read_env_or_registry("ADZUNA_APP_KEY")
+AGGREGATOR_ENABLED = bool(ADZUNA_APP_ID and ADZUNA_APP_KEY)
 
 
 def ensure_dirs() -> None:
