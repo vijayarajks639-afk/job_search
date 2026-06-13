@@ -1,0 +1,47 @@
+{
+  "_note": "SAMPLE DATA ONLY — fabricated, realistic-looking examples used to showcase the local agentic pipeline's output format. No real candidate or match data.",
+  "matches": [
+    {
+      "company": "Example Bank GCC",
+      "title": "Director, Data Platform Engineering",
+      "location": "Bengaluru, India",
+      "posted_date": "2026-06-09",
+      "fit_score": 82,
+      "source": "workday (live API)",
+      "rationale": "Sample: 20+ yrs enterprise data platforms maps directly to the platform-modernization mandate; regulatory data experience matches the credit-risk context.",
+      "three_hats": {
+        "hr_director": {"verdict": "shortlist", "reason": "Level and scope align with director band."},
+        "hiring_manager": {"verdict": "shortlist", "reason": "Hands-on lakehouse + governance delivery evidence."},
+        "recruiter": {"verdict": "pass_ats", "reason": "JD keywords present naturally in resume."}
+      }
+    },
+    {
+      "company": "Example Payments Co",
+      "title": "Head of Data Engineering",
+      "location": "Hyderabad, India",
+      "fit_score": 74,
+      "posted_date": "2026-06-08",
+      "source": "adzuna (aggregator)",
+      "rationale": "Sample: strong platform leadership match; payments domain is adjacent, not core — flagged honestly as a gap.",
+      "three_hats": {
+        "hr_director": {"verdict": "shortlist", "reason": "Leadership scope fits."},
+        "hiring_manager": {"verdict": "maybe", "reason": "Payments domain depth unproven; platform skills transfer."},
+        "recruiter": {"verdict": "pass_ats", "reason": "Core keywords match."}
+      }
+    },
+    {
+      "company": "Example Tech GCC",
+      "title": "Principal Engineer, ML Platform",
+      "location": "Pune, India",
+      "fit_score": 58,
+      "posted_date": "2026-06-11",
+      "source": "web search",
+      "rationale": "Sample: IC-track principal role — seniority fits but the candidate targets leadership tracks; MLOps depth is in the 'currently learning' bucket, stated honestly.",
+      "three_hats": {
+        "hr_director": {"verdict": "maybe", "reason": "IC track vs leadership preference mismatch."},
+        "hiring_manager": {"verdict": "maybe", "reason": "Platform fundamentals strong, MLOps tooling newer."},
+        "recruiter": {"verdict": "pass_ats", "reason": "Partial keyword coverage."}
+      }
+    }
+  ]
+}

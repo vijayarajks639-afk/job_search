@@ -1,0 +1,4 @@
+# Committed (unlike secrets.toml). Caps resume uploads to bound memory on the
+# ~1 GB Community Cloud instance — a hostile/huge PDF can't exhaust RAM.
+[server]
+maxUploadSize = 5

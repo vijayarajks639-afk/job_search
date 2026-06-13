@@ -2,6 +2,9 @@
 credentials.json
 token.json
 .env
+# Streamlit: secrets stay local, but config.toml (upload limits) is shipped
+.streamlit/*
+!.streamlit/config.toml
 
 # PII — never commit
 profile/

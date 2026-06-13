@@ -17,7 +17,7 @@ profile. Edit freely — add/remove companies and the agent adapts.
 - Deutsche Bank (Pune, Bengaluru)
 - UBS (Pune, Hyderabad)
 - Citi (Pune, Chennai, Bengaluru)
-- Wells Fargo (Bengaluru, Hyderabad, Chennai) — current employer; include only external moves
+- Wells Fargo (Bengaluru, Hyderabad, Chennai)
 - Macquarie (Gurugram, Hyderabad)
 - BlackRock (Gurugram, Mumbai)
 - State Street (Bengaluru, Hyderabad)
