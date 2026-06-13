@@ -100,3 +100,33 @@ def score_posting(resume_text: str, posting: JobPosting) -> dict:
     )
     text = "".join(block.text for block in msg.content if block.type == "text")
     return _normalize(_parse_json(text))
+
+
+def detect_domain(resume_text: str, domains: list[str]) -> str | None:
+    """
+    Classify a resume into ONE of `domains` using Claude (Haiku). Returns the
+    matched domain string, or None if AI is disabled or no clean match. Used as
+    a rescue when the keyword heuristic finds nothing (e.g. a scanned PDF).
+    Raises on API error so the caller can log and fall back to manual pick.
+    """
+    if not config.AI_SCORING_ENABLED:
+        return None
+
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    prompt = (
+        "Classify this resume into ONE industry domain. Reply with ONLY the "
+        "single best-matching domain text from the list below — no other words:\n"
+        + "\n".join(f"- {d}" for d in domains)
+        + "\n\nRESUME:\n" + resume_text[:_RESUME_CHARS]
+    )
+    msg = client.messages.create(
+        model=MODEL, max_tokens=30,
+        messages=[{"role": "user", "content": prompt}])
+    out = "".join(b.text for b in msg.content if b.type == "text").strip().lower()
+    for d in domains:
+        dl = d.lower()
+        if dl == out or dl in out or out in dl:
+            return d
+    return None

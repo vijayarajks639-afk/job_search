@@ -1,13 +1,15 @@
 """
-Admin tab for the public cloud demo — Vijay only.
+Admin tab for the public cloud demo — owner only.
 
-- Gate: password from st.secrets["ADMIN_PASSWORD"], compared with
-  hmac.compare_digest (no timing leak). Session flag in st.session_state.
-- Shows usage summary from cloud.usage + Adzuna quota status.
-- "Email usage report" button: SMTP over SSL with a Gmail *app password*
+Access gate: the visitor's resume must contain the owner email
+(REPORT_RECIPIENT). cloud_app.py extracts the email on resume upload and sets
+st.session_state["admin_ok"] = True when it matches. This tab is not rendered
+at all for other visitors — it simply doesn't appear in the tab list.
+
+- "Email usage report" button: SMTP over SSL with a Gmail app password
   (st.secrets["GMAIL_ADDRESS"] / st.secrets["GMAIL_APP_PASSWORD"]).
-  Recipient is HARDCODED below — the app can never email anyone else.
-  App passwords are revocable any time at myaccount.google.com/apppasswords.
+  Recipient is HARDCODED — the app can never email anyone else.
+  App passwords are revocable at myaccount.google.com/apppasswords.
 """
 
 from __future__ import annotations
@@ -21,19 +23,21 @@ from email.mime.text import MIMEText
 
 import streamlit as st
 
-from cloud import usage
+from cloud import usage, search_history
 
 MAX_LOGIN_ATTEMPTS = 5
-
-# Hardcoded by design — usage reports go to the owner only. Do not parameterize.
-REPORT_RECIPIENT = "vijayaraj.ks639@gmail.com"
 
 
 def _check_password(entered: str) -> bool:
     expected = str(st.secrets.get("ADMIN_PASSWORD", ""))
     if not expected:
-        return False  # no password configured -> admin disabled
+        return False
     return hmac.compare_digest(entered.encode(), expected.encode())
+
+# Hardcoded by design — reports go to the owner only. Also used in cloud_app.py
+# as the identity check: if the uploaded resume's email matches this, admin
+# access is granted for the session.
+REPORT_RECIPIENT = "vijayaraj.ks639@gmail.com"
 
 
 def _esc(v) -> str:
@@ -41,8 +45,6 @@ def _esc(v) -> str:
 
 
 def _build_report_html(s: dict) -> str:
-    # Escape every interpolated value — company/domain names and error text can
-    # carry attacker-influenced content (crafted PDF, Adzuna payload).
     rows_dom = "".join(f"<tr><td>{_esc(d)}</td><td>{_esc(n)}</td></tr>"
                        for d, n in s["top_domains"]) or "<tr><td colspan=2>—</td></tr>"
     rows_co = "".join(f"<tr><td>{_esc(c)}</td><td>{_esc(n)}</td></tr>"
@@ -68,17 +70,15 @@ def _build_report_html(s: dict) -> str:
     """
 
 
-def _send_report(html: str) -> str:
+def _send_report(html_body: str) -> str:
     sender = str(st.secrets.get("GMAIL_ADDRESS", ""))
     app_pw = str(st.secrets.get("GMAIL_APP_PASSWORD", ""))
     if not (sender and app_pw):
         raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in secrets")
-
-    msg = MIMEText(html, "html")
+    msg = MIMEText(html_body, "html")
     msg["Subject"] = f"Job Search Demo — usage report {datetime.now():%Y-%m-%d %H:%M}"
     msg["From"] = sender
     msg["To"] = REPORT_RECIPIENT
-
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
         smtp.login(sender, app_pw)
         smtp.sendmail(sender, [REPORT_RECIPIENT], msg.as_string())
@@ -86,22 +86,29 @@ def _send_report(html: str) -> str:
 
 
 def render() -> None:
+    # Tab visibility is gated by resume email match (cloud_app.py sets admin_ok).
+    # Content is gated by a second factor: ADMIN_PASSWORD from st.secrets.
+    if not st.session_state.get("admin_ok"):
+        st.warning("Access denied.")
+        return
+
     st.subheader("🔐 Admin")
 
-    if not st.session_state.get("admin_ok"):
+    if not st.session_state.get("admin_auth"):
         attempts = st.session_state.get("admin_attempts", 0)
         if attempts >= MAX_LOGIN_ATTEMPTS:
             st.error("Too many failed attempts — refresh the page to try again.")
             return
+        st.info("Your identity is confirmed. Enter the admin password to continue.")
         pw = st.text_input("Admin password", type="password", key="admin_pw_input")
-        if st.button("Log in"):
+        if st.button("Unlock"):
             if _check_password(pw):
-                st.session_state["admin_ok"] = True
+                st.session_state["admin_auth"] = True
                 st.session_state["admin_attempts"] = 0
                 st.rerun()
             else:
                 st.session_state["admin_attempts"] = attempts + 1
-                time.sleep(1)  # slow down scripted guessing
+                time.sleep(1)
                 st.error("Wrong password.")
         return
 
@@ -134,6 +141,35 @@ def render() -> None:
 
     st.caption("Stats reset when the app reboots (Community Cloud storage is ephemeral).")
 
+    # ── Per-user search history (past 3 days) ────────────────────────────────
+    st.divider()
+    st.markdown("### User search history (past 3 days)")
+    all_users = search_history.get_all_users(days=3)
+    if not all_users:
+        st.caption("No user searches recorded in the past 3 days "
+                   "(or history was reset on app reboot).")
+    else:
+        for u in all_users:
+            last_ts = datetime.fromisoformat(u["searches"][0]["ts"])
+            n = len(u["searches"])
+            label = (f"**{u['name']}** — {n} search{'es' if n != 1 else ''} · "
+                     f"last active {last_ts.strftime('%d %b %H:%M UTC')}")
+            with st.expander(label, expanded=False):
+                rows = []
+                for srv in u["searches"]:
+                    ts = datetime.fromisoformat(srv["ts"])
+                    cos = ", ".join(srv["companies"][:3])
+                    if len(srv["companies"]) > 3:
+                        cos += f" +{len(srv['companies']) - 3}"
+                    rows.append({
+                        "When (UTC)": ts.strftime("%d %b %H:%M"),
+                        "Domain": srv["domain"],
+                        "Companies": cos,
+                        "Keywords": srv["keywords"] or "—",
+                        "Results": srv["results"],
+                    })
+                st.table(rows)
+
     st.divider()
     if st.button(f"📧 Email usage report to {REPORT_RECIPIENT}"):
         try:
@@ -144,4 +180,5 @@ def render() -> None:
 
     if st.button("Log out of admin"):
         st.session_state["admin_ok"] = False
+        st.session_state["admin_auth"] = False
         st.rerun()

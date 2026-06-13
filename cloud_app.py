@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -24,17 +25,18 @@ import streamlit as st
 import config
 from sources import adzuna
 from domain_catalog import DOMAINS
-from cloud import usage, admin, domain_detect, ai_score
+from cloud import usage, admin, domain_detect, ai_score, search_history
 
 GITHUB_URL = "https://github.com/vijayarajks639-afk/job_search"
 SAMPLE_FILE = Path(__file__).resolve().parent / "cloud" / "sample_matches.json"
 
-# Only ONE posting may be AI-analyzed per search (tightest-budget setting).
-AI_POSTINGS_PER_SEARCH = 1
+# Max AI analyses per search — set equal to session cap so only the session
+# limit matters (2 total per browser session).
+AI_POSTINGS_PER_SEARCH = 2
 
 config.ensure_dirs()
 
-st.set_page_config(page_title="India GCC Job Search — Demo",
+st.set_page_config(page_title="Find me a Job",
                    page_icon="💼", layout="wide")
 
 # Count each browser session once.
@@ -43,6 +45,7 @@ if not st.session_state.get("_visit_logged"):
     st.session_state["_visit_logged"] = True
     st.session_state["searches_used"] = 0
     st.session_state["ai_used"] = 0
+    st.session_state["recent_searches"] = []
 
 
 def _clean_company(name: str) -> str:
@@ -56,6 +59,24 @@ def _sanitize_keywords(raw: str) -> str:
     job-title chars), length-capped."""
     cleaned = re.sub(r"[^A-Za-z0-9 +#./-]", " ", raw)
     return " ".join(cleaned.split())[:60]
+
+
+def _extract_identity(text: str) -> tuple[str | None, str | None]:
+    """Best-effort (name, email) from resume plain-text. Returns (None, None)
+    when not found. Email via regex; name from first plausible name-line in the
+    first 10 lines (2–5 words, letters only, no @ or digits)."""
+    email_m = re.search(r"[\w.+\-]+@[\w\-]+\.[\w.]+", text)
+    email = email_m.group(0).lower() if email_m else None
+    name = None
+    for line in text.strip().splitlines()[:10]:
+        line = line.strip()
+        words = line.split()
+        if (2 <= len(words) <= 5
+                and re.match(r"^[A-Za-z][A-Za-z .\-']+$", line)
+                and 5 <= len(line) <= 50):
+            name = line
+            break
+    return name, email
 
 
 # ── Fit-score / verdict badges (same thresholds as local dashboard.py) ───────
@@ -125,7 +146,7 @@ def _analyze_button(p, key: str, idx: int) -> None:
     if no_resume:
         help_txt = "Upload a resume above to analyse fit."
     elif search_cap:
-        help_txt = "One AI analysis per search in this demo — run a new search to analyse another."
+        help_txt = "AI analysis limit reached for this session (max 2)."
     elif session_cap:
         help_txt = "AI-analysis limit reached for this session."
     else:
@@ -174,19 +195,27 @@ def _render_results() -> None:
 
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
-tab_search, tab_about, tab_admin = st.tabs(
-    ["🔍 Search jobs", "ℹ️ About this project", "🔐 Admin"])
+# Visitors see only Search. Admin (owner's resume email) gets About + Admin too.
+if st.session_state.get("admin_ok"):
+    tab_search, tab_about, tab_admin = st.tabs(
+        ["🔍 Search jobs", "ℹ️ About this project", "🔐 Admin"])
+else:
+    tab_search = st.tabs(["🔍 Search jobs"])[0]
+    tab_about = None
+    tab_admin = None
 
 
 with tab_search:
-    st.title("India GCC Job Search — live demo")
-    st.caption(
-        "Upload your resume → we detect your industry domain and pre-select "
-        "matching India GCCs → search live postings via the Adzuna jobs API → "
-        "optionally get an AI fit score (HR / Hiring-Manager / Recruiter verdicts "
-        "+ resume tailoring) on a posting. The public slice of a larger local "
-        "agentic pipeline — see the About tab."
-    )
+    st.title("Find me a Job")
+    st.markdown("##### Resume-driven job matching for India GCCs, with live "
+                "postings + AI fit scores")
+    if st.session_state.get("admin_ok"):
+        st.caption(
+            "Upload your resume → we detect your industry domain and pre-select "
+            "matching India GCCs → search live postings via the Adzuna jobs API → "
+            "optionally get an AI fit score (HR / Hiring-Manager / Recruiter verdicts "
+            "+ resume tailoring) on a posting."
+        )
 
     if not config.AGGREGATOR_ENABLED:
         st.error("Search is unavailable: Adzuna API keys are not configured.")
@@ -203,54 +232,151 @@ with tab_search:
                 # never written to disk and never logged.
                 text = domain_detect.extract_text(up.read(), up.name)
                 st.session_state["resume_text"] = text
-                st.session_state["detect_result"] = domain_detect.detect(text)
+                # Identify the visitor from their resume (never stored raw).
+                name, email = _extract_identity(text)
+                if email:
+                    uhash = search_history.user_hash(email)
+                    st.session_state["user_hash"] = uhash
+                    st.session_state["user_name"] = (
+                        name or email.split("@")[0].replace(".", " ").title())
+                    # Grant admin access when the owner uploads their own resume.
+                    if email == admin.REPORT_RECIPIENT:
+                        st.session_state["admin_ok"] = True
+                else:
+                    st.session_state.pop("user_hash", None)
+                    st.session_state["user_name"] = None
+                res = domain_detect.detect(text)
+                # Keyword pass found NOTHING (e.g. scanned/image PDF) -> let Claude
+                # read the full resume, if the API is on and within the AI budget.
+                if res["confidence"] == "none" and config.AI_SCORING_ENABLED \
+                        and usage.ai_quota_remaining() > 0:
+                    try:
+                        d = ai_score.detect_domain(text, list(DOMAINS.keys()))
+                        if d:
+                            usage.consume_ai_quota(1)
+                            res = {"domain": d, "confidence": "ai",
+                                   "matched_keywords": [],
+                                   "companies": DOMAINS[d]["companies"], "scores": {}}
+                            usage.log_event("ai_detect", domain=d)
+                    except Exception as exc:
+                        usage.log_event("error", detail=f"ai_detect: {str(exc)[:200]}")
+                st.session_state["detect_result"] = res
                 st.session_state["_detected_for"] = up.name
-                usage.log_event(
-                    "detect",
-                    domain=st.session_state["detect_result"]["domain"],
-                    confidence=st.session_state["detect_result"]["confidence"])
+                usage.log_event("detect", domain=res["domain"],
+                                confidence=res["confidence"])
             except Exception as exc:
                 usage.log_event("error", detail=f"detect: {str(exc)[:200]}")
                 st.warning("Could not read that file — pick a domain manually below.")
 
         det = st.session_state.get("detect_result")
-        if det and det["confidence"] == "low":
+        if det and det["confidence"] == "none":
+            # Genuinely no extractable text (scanned/image PDF) — only here do we
+            # force a manual pick.
             st.warning(
-                "Couldn't confidently match this resume to a GCC industry "
-                "domain — please pick one manually below.")
+                "Couldn't read enough text from this file to detect a domain — "
+                "a scanned or image-only PDF can cause this. Pick one manually below.")
             det = None
-        if det:
+        elif det and det["confidence"] == "ai":
+            st.success(f"Detected domain: **{det['domain']}** — Claude read your "
+                       "full resume to classify it. Change it below if needed.")
+        elif det and det["confidence"] == "low":
+            st.info(f"Best guess: **{det['domain']}** — weak keyword signal, so "
+                    "please confirm it or pick a different domain below.")
+        elif det:
             st.success(
-                f"Detected domain: **{det['domain']}** "
-                f"({det['confidence']} confidence) — based on keywords like "
+                f"Detected domain: **{det['domain']}** ({det['confidence']} confidence) "
+                f"— matched on keywords like "
                 f"*{', '.join(det['matched_keywords'][:5]) or '—'}*. "
-                "The local version of this pipeline does the same step with a "
-                "Claude agent reading the full resume; the demo uses a "
-                "transparent keyword heuristic. Adjust below if it got it wrong."
-            )
+                "Adjust below if it got it wrong.")
 
-        # ── Step 2: confirm domain + companies ──────────────────────────────
+        # ── Search history — shown once we know who the visitor is ──────────
+        session_recent = st.session_state.get("recent_searches", [])
+        uhash_val = st.session_state.get("user_hash")
+        hist_3d = search_history.get_history(uhash_val) if uhash_val else []
+
+        if session_recent or hist_3d:
+            first = (st.session_state.get("user_name") or "").split()[0] or "Your"
+            with st.expander(f"📋 {first}'s search activity", expanded=False):
+                if session_recent:
+                    st.markdown("**This session**")
+                    for s in reversed(session_recent):
+                        cos = ", ".join(_clean_company(c) for c in s["companies"][:3])
+                        if len(s["companies"]) > 3:
+                            cos += f" +{len(s['companies']) - 3} more"
+                        kw = f" · _{s['keywords']}_" if s["keywords"] else ""
+                        st.caption(
+                            f"{s['time']} · **{s['domain']}** · {cos}{kw} "
+                            f"· {s['results']} result(s)")
+                if hist_3d:
+                    if session_recent:
+                        st.divider()
+                    st.markdown("**Past 3 days (all sessions)**")
+                    rows = []
+                    for s in hist_3d:
+                        ts = datetime.fromisoformat(s["ts"])
+                        cos = ", ".join(s["companies"][:3])
+                        if len(s["companies"]) > 3:
+                            cos += f" +{len(s['companies']) - 3}"
+                        rows.append({
+                            "When (UTC)": ts.strftime("%d %b %H:%M"),
+                            "Domain": s["domain"],
+                            "Companies": cos,
+                            "Keywords": s["keywords"] or "—",
+                            "Results": s["results"],
+                        })
+                    st.table(rows)
+                elif uhash_val:
+                    st.caption("No searches in the past 3 days across sessions.")
+
+        # ── Step 2: companies — résumé-driven, auto-selected ────────────────
         st.markdown("#### Step 2 — Companies to search")
         domain_names = list(DOMAINS.keys())
-        det_idx = domain_names.index(det["domain"]) if det else 0
-        domain = st.selectbox("Industry domain", domain_names, index=det_idx)
-        st.caption(DOMAINS[domain]["description"])
+        companies: list[str] = []
+        domain = None
+        kw_raw, days = "", 14
 
-        default_cos = DOMAINS[domain]["companies"][:usage.MAX_COMPANIES_PER_SEARCH] \
-            if det and det["domain"] == domain else DOMAINS[domain]["companies"][:3]
-        companies = st.multiselect(
-            f"Companies (max {usage.MAX_COMPANIES_PER_SEARCH})",
-            DOMAINS[domain]["companies"],
-            default=default_cos,
-            max_selections=usage.MAX_COMPANIES_PER_SEARCH,
-            key=f"cos_{domain}_{bool(det)}",
-        )
-        kw_raw = st.text_input(
-            "Role keywords (optional)", placeholder="e.g. data engineer, architect",
-            max_chars=60)
-        days = st.select_slider("Posted within (days)", options=[7, 14, 30], value=14)
+        if det:
+            # Résumé drives it: domain pre-selected, top 5 auto-selected — the
+            # visitor is NOT asked to pick. They can tweak in the expander.
+            domain = st.selectbox("Industry domain", domain_names,
+                                  index=domain_names.index(det["domain"]))
+            top5 = DOMAINS[domain]["companies"][:usage.MAX_COMPANIES_PER_SEARCH]
+            with st.expander("Adjust companies (optional)", expanded=False):
+                companies = st.multiselect(
+                    f"Companies (max {usage.MAX_COMPANIES_PER_SEARCH})",
+                    DOMAINS[domain]["companies"], default=top5,
+                    max_selections=usage.MAX_COMPANIES_PER_SEARCH,
+                    key=f"cos_{domain}")
+            # Never silently fall back — user's explicit selection is used as-is.
+            # If they cleared all, Search is disabled (disabled=not companies below).
+            if companies:
+                st.caption("Will search: **"
+                           + ", ".join(_clean_company(c) for c in companies) + "**")
+            else:
+                st.caption("No companies selected — open *Adjust companies* above "
+                           "to pick at least one.")
+        else:
+            st.info("⬆️ Upload your resume above to auto-detect your domain and "
+                    "matching companies — or browse manually below.")
+            with st.expander("Browse by domain manually", expanded=False):
+                domain = st.selectbox(
+                    "Industry domain", domain_names, index=None,
+                    placeholder="Pick a domain", key="manual_domain")
+                if domain:
+                    st.caption(DOMAINS[domain]["description"])
+                    companies = st.multiselect(
+                        f"Companies (max {usage.MAX_COMPANIES_PER_SEARCH})",
+                        DOMAINS[domain]["companies"],
+                        default=DOMAINS[domain]["companies"][:usage.MAX_COMPANIES_PER_SEARCH],
+                        max_selections=usage.MAX_COMPANIES_PER_SEARCH,
+                        key="manual_cos")
 
-        st.markdown("#### Step 3 — Search")
+        if companies:
+            kw_raw = st.text_input(
+                "Role keywords (optional)", placeholder="e.g. data engineer, architect",
+                max_chars=60)
+            days = st.select_slider("Posted within (days)", options=[7, 14, 30], value=14)
+            st.markdown("#### Step 3 — Search")
 
         if st.button("Search", type="primary", disabled=not companies):
             keywords = _sanitize_keywords(kw_raw)
@@ -293,6 +419,27 @@ with tab_search:
                 st.session_state["ai_results"] = {}
                 st.session_state["analyses_this_search"] = 0
 
+                # Record to session recent-searches (last 3, newest last).
+                recent = st.session_state.setdefault("recent_searches", [])
+                recent.append({
+                    "time": datetime.now(timezone.utc).strftime("%d %b %H:%M UTC"),
+                    "domain": domain,
+                    "companies": list(companies),
+                    "keywords": keywords,
+                    "results": len(results),
+                })
+                st.session_state["recent_searches"] = recent[-3:]
+
+                # Record to persistent per-user history (best-effort).
+                if st.session_state.get("user_hash"):
+                    try:
+                        search_history.record_search(
+                            st.session_state["user_hash"],
+                            st.session_state.get("user_name") or "",
+                            domain, list(companies), keywords, len(results))
+                    except Exception:
+                        pass
+
         _render_results()
 
         ai_left = usage.ai_quota_remaining() if config.AI_SCORING_ENABLED else 0
@@ -303,9 +450,10 @@ with tab_search:
             + (f" · {ai_left} AI analyses left today" if config.AI_SCORING_ENABLED else ""))
 
 
-with tab_about:
-    st.title("About this project")
-    st.markdown(f"""
+if tab_about is not None:
+    with tab_about:
+        st.title("About this project")
+        st.markdown(f"""
 This demo is the public slice of a **personal agentic job-search pipeline**
 built with Python + Claude. The full system runs locally and adds what a
 public demo can't:
@@ -324,27 +472,27 @@ Source code: [{GITHUB_URL.removeprefix("https://")}]({GITHUB_URL})
 The cards below show the *format* the matcher produces — the data here is
 **sample only**. Run a real search and click **Analyse my fit** for live scoring.
 """)
-    try:
-        samples = json.loads(SAMPLE_FILE.read_text(encoding="utf-8"))["matches"]
-    except Exception:
-        samples = []
-    for m in samples:
-        score = m["fit_score"]
-        color = "#2e7d32" if score >= 70 else "#e65100" if score >= 55 else "#616161"
-        st.markdown(
-            f"**{m['title']}** — {m['company']} · {m['location']} · "
-            f"posted {m['posted_date']} · "
-            f"<span style='background:{color};color:white;padding:2px 8px;"
-            f"border-radius:10px;font-size:0.85em'>FIT {score}</span> · "
-            f"<i>{m['source']}</i>",
-            unsafe_allow_html=True)
-        st.caption(m["rationale"])
-        with st.expander("Three-hat verdicts"):
-            for hat, v in m["three_hats"].items():
-                st.markdown(f"- **{hat.replace('_', ' ').title()}**: "
-                            f"{v['verdict']} — {v['reason']}")
-        st.divider()
+        try:
+            samples = json.loads(SAMPLE_FILE.read_text(encoding="utf-8"))["matches"]
+        except Exception:
+            samples = []
+        for m in samples:
+            score = m["fit_score"]
+            color = "#2e7d32" if score >= 70 else "#e65100" if score >= 55 else "#616161"
+            st.markdown(
+                f"**{m['title']}** — {m['company']} · {m['location']} · "
+                f"posted {m['posted_date']} · "
+                f"<span style='background:{color};color:white;padding:2px 8px;"
+                f"border-radius:10px;font-size:0.85em'>FIT {score}</span> · "
+                f"<i>{m['source']}</i>",
+                unsafe_allow_html=True)
+            st.caption(m["rationale"])
+            with st.expander("Three-hat verdicts"):
+                for hat, v in m["three_hats"].items():
+                    st.markdown(f"- **{hat.replace('_', ' ').title()}**: "
+                                f"{v['verdict']} — {v['reason']}")
+            st.divider()
 
-
-with tab_admin:
-    admin.render()
+if tab_admin is not None:
+    with tab_admin:
+        admin.render()

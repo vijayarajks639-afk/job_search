@@ -27,12 +27,23 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "etl", "spark", "kafka", "hadoop", "databricks", "snowflake",
         "python", "sql", "aws", "azure", "gcp", "cloud", "devops",
         "microservices", "api", "architect", "kubernetes", "airflow",
+        # Senior / leadership & enterprise wording (resumes light on raw tools)
+        "engineering manager", "engineering lead", "solution architect",
+        "enterprise architecture", "technical architect", "data architect",
+        "delivery management", "agile", "scrum", "ci/cd", "data modeling",
+        "data modelling", "data quality", "big data", "informatica",
+        "teradata", "tableau", "power bi", "qlik", "oracle", "sql server",
+        "java", "scala", "rest api", "platform modernization",
+        "analytics", "business intelligence", "mlops",
     ],
     "Banking & Financial Services": [
         "credit risk", "regulatory reporting", "investment banking",
         "wealth management", "capital markets", "anti money laundering",
         "banking", "basel", "compliance", "treasury", "trading", "payments",
         "aml", "kyc", "lending", "mortgage", "insurance", "actuarial",
+        "financial services", "asset management", "risk management",
+        "market risk", "operational risk", "finance transformation",
+        "reconciliation", "settlements", "fraud", "bfsi",
     ],
     "Healthcare & Life Sciences": [
         "clinical trials", "medical device", "life sciences", "regulatory affairs",
@@ -109,8 +120,10 @@ def detect(resume_text: str) -> dict:
     top_domain, top_score = ranked[0]
     second_score = ranked[1][1] if len(ranked) > 1 else 0
 
-    if top_score < 4:
-        confidence = "low"
+    if top_score == 0:
+        confidence = "none"          # no signal at all (scanned/empty PDF)
+    elif top_score < 3:
+        confidence = "low"           # weak, but still the best guess — KEEP it
     elif top_score >= second_score * 1.5:
         confidence = "high"
     else:
