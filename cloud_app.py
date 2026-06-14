@@ -70,20 +70,30 @@ def _mask_email(email: str) -> str:
 
 
 def _get_location() -> str:
-    """Visitor location from IP geolocation via ip-api.com.
-    Only works on Streamlit Cloud where X-Forwarded-For is set by the proxy.
-    Returns empty string locally (127.0.0.1 / no header)."""
+    """Visitor location from IP geolocation (HTTPS, ipapi.co free tier).
+    On Streamlit Cloud: X-Forwarded-For / X-Real-IP carries visitor's real IP.
+    Locally: self-lookup returns the machine's public IP city."""
     try:
         import json as _json
         import urllib.request as _req
-        ip = st.context.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        if ip and ip not in ("127.0.0.1", "::1"):
-            with _req.urlopen(
-                    f"http://ip-api.com/json/{ip}?fields=city,country", timeout=3) as r:
-                data = _json.loads(r.read())
-            parts = [p for p in (data.get("city", ""), data.get("country", "")) if p]
-            if parts:
-                return ", ".join(parts)
+        headers = st.context.headers
+        # Pick the first non-local IP from forwarding headers.
+        ip = ""
+        for hdr in ("X-Forwarded-For", "X-Real-Ip", "Cf-Connecting-Ip"):
+            val = headers.get(hdr, "").split(",")[0].strip()
+            if val and val not in ("127.0.0.1", "::1", ""):
+                ip = val
+                break
+        # ipapi.co: pass IP for known addresses; omit for self-lookup (local dev).
+        url = f"https://ipapi.co/{ip}/json/" if ip else "https://ipapi.co/json/"
+        req = _req.Request(url, headers={"User-Agent": "job-search-demo/1.0"})
+        with _req.urlopen(req, timeout=4) as r:
+            data = _json.loads(r.read())
+        city    = data.get("city", "")
+        country = data.get("country_name", "")
+        parts   = [p for p in (city, country) if p]
+        if parts:
+            return ", ".join(parts)
     except Exception:
         pass
     return ""
