@@ -107,7 +107,13 @@ AGGREGATOR_ENABLED = bool(ADZUNA_APP_ID and ADZUNA_APP_KEY)
 # The cloud demo can't run the CLI, so it scores postings via the Anthropic API.
 # Unset = AI scoring silently disabled (the "Analyze my fit" button is hidden).
 ANTHROPIC_API_KEY  = _read_env_or_registry("ANTHROPIC_API_KEY")
-AI_SCORING_ENABLED = bool(ANTHROPIC_API_KEY)
+# Set AI_ENABLED = "false" in Streamlit secrets to disable the Analyze button
+# without removing the API key (useful as a cost kill-switch).
+_ai_enabled_flag   = _read_env_or_registry("AI_ENABLED")
+AI_SCORING_ENABLED = (
+    bool(ANTHROPIC_API_KEY)
+    and _ai_enabled_flag.lower() not in ("false", "0", "no")
+)
 
 
 def ensure_dirs() -> None:

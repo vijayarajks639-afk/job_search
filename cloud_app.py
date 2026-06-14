@@ -61,6 +61,34 @@ def _sanitize_keywords(raw: str) -> str:
     return " ".join(cleaned.split())[:60]
 
 
+def _mask_email(email: str) -> str:
+    """'vijayaraj.ks639@gmail.com' -> 'vij***@gmail.com'"""
+    local, _, domain = email.partition("@")
+    masked_local = local[:3] + "***" if len(local) > 3 else local[0] + "***"
+    return f"{masked_local}@{domain}"
+
+
+
+def _get_location() -> str:
+    """Visitor location from IP geolocation via ip-api.com.
+    Only works on Streamlit Cloud where X-Forwarded-For is set by the proxy.
+    Returns empty string locally (127.0.0.1 / no header)."""
+    try:
+        import json as _json
+        import urllib.request as _req
+        ip = st.context.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if ip and ip not in ("127.0.0.1", "::1"):
+            with _req.urlopen(
+                    f"http://ip-api.com/json/{ip}?fields=city,country", timeout=3) as r:
+                data = _json.loads(r.read())
+            parts = [p for p in (data.get("city", ""), data.get("country", "")) if p]
+            if parts:
+                return ", ".join(parts)
+    except Exception:
+        pass
+    return ""
+
+
 def _extract_identity(text: str) -> tuple[str | None, str | None]:
     """Best-effort (name, email) from resume plain-text. Returns (None, None)
     when not found. Email via regex; name from first plausible name-line in the
@@ -239,12 +267,18 @@ with tab_search:
                     st.session_state["user_hash"] = uhash
                     st.session_state["user_name"] = (
                         name or email.split("@")[0].replace(".", " ").title())
+                    st.session_state["user_email_masked"] = _mask_email(email)
+                    # Fetch location once per session on first resume upload.
+                    if "user_location" not in st.session_state:
+                        st.session_state["user_location"] = _get_location()
                     # Grant admin access when the owner uploads their own resume.
                     if email == admin.REPORT_RECIPIENT:
                         st.session_state["admin_ok"] = True
                 else:
                     st.session_state.pop("user_hash", None)
                     st.session_state["user_name"] = None
+                    st.session_state.pop("user_email_masked", None)
+                    st.session_state.pop("user_location", None)
                 res = domain_detect.detect(text)
                 # Keyword pass found NOTHING (e.g. scanned/image PDF) -> let Claude
                 # read the full resume, if the API is on and within the AI budget.
@@ -436,7 +470,9 @@ with tab_search:
                         search_history.record_search(
                             st.session_state["user_hash"],
                             st.session_state.get("user_name") or "",
-                            domain, list(companies), keywords, len(results))
+                            domain, list(companies), keywords, len(results),
+                            email_masked=st.session_state.get("user_email_masked", ""),
+                            location=st.session_state.get("user_location", ""))
                     except Exception:
                         pass
 

@@ -51,6 +51,28 @@ def _build_report_html(s: dict) -> str:
                       for c, n in s["top_companies"]) or "<tr><td colspan=2>—</td></tr>"
     errs = "".join(f"<li>{_esc(e['ts'])} — {_esc(e.get('detail', ''))}</li>"
                    for e in s["last_errors"]) or "<li>none</li>"
+
+    all_users = search_history.get_all_users(days=3)
+    if all_users:
+        user_rows = "".join(
+            f"<tr>"
+            f"<td>{_esc(u['name'])}</td>"
+            f"<td>{_esc(u.get('email_masked', '—'))}</td>"
+            f"<td>{_esc(u.get('location', '—'))}</td>"
+            f"<td>{len(u['searches'])}</td>"
+            f"<td>{datetime.fromisoformat(u['searches'][0]['ts']).strftime('%d %b %H:%M UTC')}</td>"
+            f"</tr>"
+            for u in all_users
+        )
+        users_section = f"""
+    <h3>Users active (past 3 days)</h3>
+    <table border=1 cellpadding=6 cellspacing=0>
+      <tr><th>Name</th><th>Email</th><th>Location</th><th>Searches</th><th>Last active</th></tr>
+      {user_rows}
+    </table>"""
+    else:
+        users_section = "<h3>Users active (past 3 days)</h3><p>No user searches recorded.</p>"
+
     return f"""
     <h2>Job Search Demo — Usage Report</h2>
     <p>Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} ·
@@ -66,6 +88,7 @@ def _build_report_html(s: dict) -> str:
     <table border=1 cellpadding=6 cellspacing=0>{rows_dom}</table>
     <h3>Top companies searched</h3>
     <table border=1 cellpadding=6 cellspacing=0>{rows_co}</table>
+    {users_section}
     <h3>Recent errors</h3><ul>{errs}</ul>
     """
 
@@ -149,11 +172,42 @@ def render() -> None:
         st.caption("No user searches recorded in the past 3 days "
                    "(or history was reset on app reboot).")
     else:
+        # ── Summary table ────────────────────────────────────────────────────
+        summary_rows = []
+        for u in all_users:
+            last_ts = datetime.fromisoformat(u["searches"][0]["ts"])
+            summary_rows.append({
+                "Name": u["name"],
+                "Email": u.get("email_masked") or "—",
+                "Location": u.get("location") or "—",
+                "Searches": len(u["searches"]),
+                "Last active (UTC)": last_ts.strftime("%d %b %H:%M"),
+            })
+        st.table(summary_rows)
+
+        # ── Location chart ───────────────────────────────────────────────────
+        from collections import Counter
+        loc_counts = Counter(
+            u.get("location") or "Unknown" for u in all_users
+        )
+        if any(loc != "Unknown" for loc in loc_counts):
+            st.markdown("**Searches by location**")
+            # Build {location: search_count} for the chart
+            loc_search_counts: dict[str, int] = {}
+            for u in all_users:
+                loc = u.get("location") or "Unknown"
+                loc_search_counts[loc] = loc_search_counts.get(loc, 0) + len(u["searches"])
+            st.bar_chart(loc_search_counts)
+
+        # ── Per-user search detail ───────────────────────────────────────────
         for u in all_users:
             last_ts = datetime.fromisoformat(u["searches"][0]["ts"])
             n = len(u["searches"])
-            label = (f"**{u['name']}** — {n} search{'es' if n != 1 else ''} · "
-                     f"last active {last_ts.strftime('%d %b %H:%M UTC')}")
+            meta = " · ".join(filter(None, [u.get("email_masked"), u.get("location")]))
+            label = (f"**{u['name']}**"
+                     + (f" · {meta}" if meta else "")
+                     + f" — {n} search{'es' if n != 1 else ''} · "
+                     + f"last active {last_ts.strftime('%d %b %H:%M UTC')}")
             with st.expander(label, expanded=False):
                 rows = []
                 for srv in u["searches"]:

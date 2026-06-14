@@ -60,7 +60,8 @@ def user_hash(email: str) -> str:
 
 
 def record_search(uhash: str, display_name: str, domain: str,
-                  companies: list[str], keywords: str, result_count: int) -> None:
+                  companies: list[str], keywords: str, result_count: int,
+                  email_masked: str = "", location: str = "") -> None:
     """Append a search record for this user. Thread-safe. Never raises — caller
     wraps in try/except so a history write never blocks a real search."""
     cutoff = _now() - timedelta(days=_KEEP_DAYS)
@@ -69,10 +70,16 @@ def record_search(uhash: str, display_name: str, domain: str,
         users = data.setdefault("users", {})
         entry = users.setdefault(uhash, {
             "display_name": display_name or "User",
+            "email_masked": email_masked,
+            "location": location,
             "searches": [],
         })
         if display_name:
             entry["display_name"] = display_name
+        if email_masked:
+            entry["email_masked"] = email_masked
+        if location:
+            entry["location"] = location
         entry["searches"].append({
             "ts": _now().isoformat(),
             "domain": domain,
@@ -115,6 +122,8 @@ def get_all_users(days: int = _DISPLAY_DAYS) -> list[dict]:
         if recent:
             result.append({
                 "name": udata.get("display_name", "Unknown"),
+                "email_masked": udata.get("email_masked", ""),
+                "location": udata.get("location", ""),
                 "searches": list(reversed(recent)),   # newest first
             })
     # Sort by most-recent search across all users.
